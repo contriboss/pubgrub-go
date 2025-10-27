@@ -100,10 +100,14 @@ func (s *Solver) ClearIncompatibilities() {
 	s.learned = s.learned[:0]
 }
 
-func (s *Solver) Solve(root Term) (Solution, error) {
-	if s.options.Logger != nil {
-		s.options.Logger.Debug("starting solver", "root", root)
+func (s *Solver) debug(msg string, args ...any) {
+	if logger := s.options.Logger; logger != nil {
+		logger.Debug(msg, args...)
 	}
+}
+
+func (s *Solver) Solve(root Term) (Solution, error) {
+	s.debug("starting solver", "root", root)
 
 	state := newSolverState(s.Source, s.options, root.Name)
 
@@ -115,9 +119,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 	assign := state.partial.seedRoot(root.Name, version)
 	state.markAssigned(root.Name)
 
-	if s.options.Logger != nil {
-		s.options.Logger.Debug("seeded root", "package", root.Name, "version", version)
-	}
+	s.debug("seeded root", "package", root.Name, "version", version)
 
 	deps, err := s.Source.GetDependencies(root.Name, version)
 	if err != nil {
@@ -141,9 +143,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 		}
 
 		if conflict != nil {
-			if s.options.Logger != nil {
-				s.options.Logger.Debug("resolving conflict", "step", steps, "conflict", conflict)
-			}
+			s.debug("resolving conflict", "step", steps, "conflict", conflict)
 			_, pivot, err := state.resolveConflict(conflict)
 			if err != nil {
 				if ns, ok := err.(*NoSolutionError); ok {
@@ -175,15 +175,11 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 
 		nextPkg, ok := state.partial.nextDecisionCandidate()
 		if !ok {
-			if s.options.Logger != nil {
-				s.options.Logger.Debug("solution found", "step", steps)
-			}
+			s.debug("solution found", "step", steps)
 			return state.partial.buildSolution(), nil
 		}
 
-		if s.options.Logger != nil {
-			s.options.Logger.Debug("selecting package", "step", steps, "package", nextPkg)
-		}
+		s.debug("selecting package", "step", steps, "package", nextPkg)
 
 		ver, found, err := state.pickVersion(nextPkg)
 		if err != nil {
@@ -200,9 +196,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 			continue
 		}
 
-		if s.options.Logger != nil {
-			s.options.Logger.Debug("making decision", "step", steps, "package", nextPkg, "version", ver)
-		}
+		s.debug("making decision", "step", steps, "package", nextPkg, "version", ver)
 
 		assign := state.partial.addDecision(nextPkg, ver)
 		state.markAssigned(assign.name)
