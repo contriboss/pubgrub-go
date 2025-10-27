@@ -654,6 +654,34 @@ func FullVersionSet() VersionSet {
 	}
 }
 
+// NewVersionRangeSet creates a VersionSet from lower and upper bounds.
+// This helper allows custom Version implementations to create intervals
+// without relying on ParseVersionRange which uses SemanticVersion.
+func NewVersionRangeSet(lower Version, lowerInclusive bool, upper Version, upperInclusive bool) VersionSet {
+	return intervalSetFromBounds(
+		newLowerBound(lower, lowerInclusive),
+		newUpperBound(upper, upperInclusive),
+	)
+}
+
+// NewLowerBoundVersionSet creates a VersionSet with only a lower bound.
+// Examples: ">= 1.0.0" (inclusive=true), "> 1.0.0" (inclusive=false)
+func NewLowerBoundVersionSet(version Version, inclusive bool) VersionSet {
+	return intervalSetFromBounds(
+		newLowerBound(version, inclusive),
+		positiveInfinityBound(),
+	)
+}
+
+// NewUpperBoundVersionSet creates a VersionSet with only an upper bound.
+// Examples: "<= 2.0.0" (inclusive=true), "< 2.0.0" (inclusive=false)
+func NewUpperBoundVersionSet(version Version, inclusive bool) VersionSet {
+	return intervalSetFromBounds(
+		negativeInfinityBound(),
+		newUpperBound(version, inclusive),
+	)
+}
+
 // Ensure interface compliance.
 var (
 	_ VersionSet = (*VersionIntervalSet)(nil)

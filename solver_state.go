@@ -43,6 +43,18 @@ func newPartialSolution(root Name) *partialSolution {
 	}
 }
 
+func (ps *partialSolution) newDecisionAssignment(name Name, version Version, level int) *assignment {
+	return &assignment{
+		name:          name,
+		term:          NewTerm(name, EqualsCondition{Version: version}),
+		kind:          assignmentDecision,
+		allowed:       (&VersionIntervalSet{}).Singleton(version),
+		version:       version,
+		decisionLevel: level,
+		index:         ps.nextIndex,
+	}
+}
+
 func (ps *partialSolution) append(assign *assignment) {
 	ps.assignments = append(ps.assignments, assign)
 	stack := ps.perPackage[assign.name]
@@ -85,29 +97,13 @@ func (ps *partialSolution) hasAssignments(name Name) bool {
 
 func (ps *partialSolution) addDecision(name Name, version Version) *assignment {
 	ps.decisionLvl++
-	assign := &assignment{
-		name:          name,
-		term:          NewTerm(name, EqualsCondition{Version: version}),
-		kind:          assignmentDecision,
-		allowed:       (&VersionIntervalSet{}).Singleton(version),
-		version:       version,
-		decisionLevel: ps.decisionLvl,
-		index:         ps.nextIndex,
-	}
+	assign := ps.newDecisionAssignment(name, version, ps.decisionLvl)
 	ps.append(assign)
 	return assign
 }
 
 func (ps *partialSolution) seedRoot(name Name, version Version) *assignment {
-	assign := &assignment{
-		name:          name,
-		term:          NewTerm(name, EqualsCondition{Version: version}),
-		kind:          assignmentDecision,
-		allowed:       (&VersionIntervalSet{}).Singleton(version),
-		version:       version,
-		decisionLevel: 0,
-		index:         ps.nextIndex,
-	}
+	assign := ps.newDecisionAssignment(name, version, 0)
 	ps.append(assign)
 	return assign
 }
