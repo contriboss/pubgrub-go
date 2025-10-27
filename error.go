@@ -114,10 +114,60 @@ func (e *PackageVersionNotFoundError) Error() string {
 	return fmt.Sprintf("package %s version %s not found", e.Package.Value(), e.Version)
 }
 
+// ErrNoSolutionFound is a simple error returned when solving fails
+// without incompatibility tracking. For detailed error messages with
+// derivation trees, enable WithIncompatibilityTracking and use NoSolutionError.
+//
+// Example:
+//
+//	solver := NewSolver(root, source) // Tracking disabled by default
+//	_, err := solver.Solve(root.Term())
+//	if err != nil {
+//	    if errors.Is(err, ErrNoSolutionFound{}) {
+//	        // Handle no solution case
+//	    }
+//	}
+type ErrNoSolutionFound struct {
+	Term Term
+}
+
+// Error implements the error interface.
+func (e ErrNoSolutionFound) Error() string {
+	return fmt.Sprintf("no solution found for %s", e.Term)
+}
+
+// ErrIterationLimit is returned when the solver exceeds its maximum iteration count.
+// This prevents infinite loops in pathological cases. Configure with WithMaxSteps(0)
+// to disable the limit (not recommended for untrusted inputs).
+//
+// Example:
+//
+//	solver := NewSolverWithOptions(
+//	    []Source{root, source},
+//	    WithMaxSteps(1000),
+//	)
+//	_, err := solver.Solve(root.Term())
+//	if iterErr, ok := err.(ErrIterationLimit); ok {
+//	    log.Printf("Solver exceeded %d steps", iterErr.Steps)
+//	}
+type ErrIterationLimit struct {
+	Steps int
+}
+
+// Error implements the error interface.
+func (e ErrIterationLimit) Error() string {
+	if e.Steps <= 0 {
+		return "solver exceeded iteration limit"
+	}
+	return fmt.Sprintf("solver exceeded iteration limit after %d steps", e.Steps)
+}
+
 var (
 	_ error = (*NoSolutionError)(nil)
 	_ error = (*VersionError)(nil)
 	_ error = (*DependencyError)(nil)
 	_ error = (*PackageNotFoundError)(nil)
 	_ error = (*PackageVersionNotFoundError)(nil)
+	_ error = ErrNoSolutionFound{}
+	_ error = ErrIterationLimit{}
 )

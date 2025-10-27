@@ -17,16 +17,65 @@ package pubgrub
 
 // Version represents a package version in the dependency resolution system.
 // Implementations must provide string representation and comparison.
+//
+// The PubGrub algorithm is version-type agnostic - any type can be used as
+// long as it implements this interface. Built-in implementations include:
+//   - SimpleVersion: Lexicographic string comparison
+//   - SemanticVersion: Full semver with major.minor.patch ordering
+//
+// Example custom version:
+//
+//	type DateVersion time.Time
+//
+//	func (dv DateVersion) String() string {
+//	    return time.Time(dv).Format("2006-01-02")
+//	}
+//
+//	func (dv DateVersion) Sort(other Version) int {
+//	    otherDate, ok := other.(DateVersion)
+//	    if !ok {
+//	        return strings.Compare(dv.String(), other.String())
+//	    }
+//	    return time.Time(dv).Compare(time.Time(otherDate))
+//	}
 type Version interface {
+	// String returns a human-readable representation of the version.
 	String() string
+
+	// Sort compares this version to another.
+	// Returns:
+	//   - negative if this version < other
+	//   - zero if this version == other
+	//   - positive if this version > other
 	Sort(other Version) int
 }
 
 // Condition represents a constraint on package versions.
 // Basic conditions like equality are built-in, but custom conditions
 // can be implemented by satisfying this interface.
+//
+// Built-in implementations:
+//   - EqualsCondition: Exact version match
+//   - VersionSetCondition: Version range constraints
+//
+// Example custom condition:
+//
+//	type MinVersionCondition struct {
+//	    MinVersion Version
+//	}
+//
+//	func (mvc MinVersionCondition) String() string {
+//	    return fmt.Sprintf(">=%s", mvc.MinVersion)
+//	}
+//
+//	func (mvc MinVersionCondition) Satisfies(ver Version) bool {
+//	    return ver.Sort(mvc.MinVersion) >= 0
+//	}
 type Condition interface {
+	// String returns a human-readable representation of the condition.
 	String() string
+
+	// Satisfies returns true if the given version meets the condition.
 	Satisfies(ver Version) bool
 }
 
@@ -45,7 +94,7 @@ type Condition interface {
 // Example custom condition:
 //
 //	type SemverCaretCondition struct {
-//	    Base SemanticVersion
+//	    Base *SemanticVersion
 //	}
 //
 //	func (sc SemverCaretCondition) String() string {
@@ -53,7 +102,7 @@ type Condition interface {
 //	}
 //
 //	func (sc SemverCaretCondition) Satisfies(ver Version) bool {
-//	    sv, ok := ver.(SemanticVersion)
+//	    sv, ok := ver.(*SemanticVersion)
 //	    if !ok {
 //	        return false
 //	    }
@@ -64,19 +113,44 @@ type Condition interface {
 //
 //	func (sc SemverCaretCondition) ToVersionSet() VersionSet {
 //	    // Convert ^1.2.3 to >=1.2.3 <2.0.0
-//	    upper := SemanticVersion{Major: sc.Base.Major + 1}
-//	    set := &VersionIntervalSet{}
-//	    return set.Interval(sc.Base, true, upper, false)
+//	    upper := &SemanticVersion{Major: sc.Base.Major + 1}
+//	    return NewVersionRangeSet(sc.Base, true, upper, false)
 //	}
 type VersionSetConverter interface {
+	// ToVersionSet converts the condition to a VersionSet for algebraic operations.
 	ToVersionSet() VersionSet
 }
 
 // Source provides access to package versions and their dependencies.
 // Implementations can fetch from in-memory stores, network registries,
 // file systems, or any other package source.
+//
+// Built-in implementations:
+//   - InMemorySource: Simple in-memory storage for testing
+//   - CombinedSource: Aggregates multiple sources
+//   - RootSource: Special source for initial requirements
+//   - CachedSource: Wraps a source with caching for performance
+//
+// Example custom source:
+//
+//	type RegistrySource struct {
+//	    BaseURL string
+//	    Client  *http.Client
+//	}
+//
+//	func (rs *RegistrySource) GetVersions(name Name) ([]Version, error) {
+//	    resp, err := rs.Client.Get(rs.BaseURL + "/packages/" + name.Value() + "/versions")
+//	    // ... parse response ...
+//	}
+//
+//	func (rs *RegistrySource) GetDependencies(name Name, version Version) ([]Term, error) {
+//	    resp, err := rs.Client.Get(rs.BaseURL + "/packages/" + name.Value() + "/" + version.String())
+//	    // ... parse response ...
+//	}
 type Source interface {
-	// GetVersions returns all versions of a package in a sorted order.
+	// GetVersions returns all versions of a package in sorted order.
+	// Versions should be sorted from lowest to highest, as the solver
+	// selects from the highest available version.
 	GetVersions(name Name) ([]Version, error)
 
 	// GetDependencies returns the dependency terms for a specific package version.

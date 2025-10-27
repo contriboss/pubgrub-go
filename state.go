@@ -1,354 +1,46 @@
+// Copyright 2024 The University of Queensland
+// Copyright 2025 Contriboss
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package pubgrub
 
 import "errors"
 
-type assignmentKind int
-
-const (
-	assignmentDecision assignmentKind = iota
-	assignmentDerivation
-)
-
-type assignment struct {
-	name          Name
-	term          Term
-	kind          assignmentKind
-	allowed       VersionSet
-	forbidden     VersionSet
-	version       Version
-	cause         *Incompatibility
-	decisionLevel int
-	index         int
-}
-
-func (a *assignment) isDecision() bool {
-	return a.kind == assignmentDecision
-}
-
-type partialSolution struct {
-	assignments []*assignment
-	perPackage  map[Name][]*assignment
-	decisionLvl int
-	nextIndex   int
-	root        Name
-}
-
-func newPartialSolution(root Name) *partialSolution {
-	return &partialSolution{
-		assignments: make([]*assignment, 0),
-		perPackage:  make(map[Name][]*assignment),
-		decisionLvl: 0,
-		nextIndex:   0,
-		root:        root,
-	}
-}
-
-func (ps *partialSolution) newDecisionAssignment(name Name, version Version, level int) *assignment {
-	return &assignment{
-		name:          name,
-		term:          NewTerm(name, EqualsCondition{Version: version}),
-		kind:          assignmentDecision,
-		allowed:       (&VersionIntervalSet{}).Singleton(version),
-		version:       version,
-		decisionLevel: level,
-		index:         ps.nextIndex,
-	}
-}
-
-func (ps *partialSolution) append(assign *assignment) {
-	ps.assignments = append(ps.assignments, assign)
-	stack := ps.perPackage[assign.name]
-	stack = append(stack, assign)
-	ps.perPackage[assign.name] = stack
-	ps.nextIndex++
-}
-
-func (ps *partialSolution) latest(name Name) *assignment {
-	stack := ps.perPackage[name]
-	if len(stack) == 0 {
-		return nil
-	}
-	return stack[len(stack)-1]
-}
-
-func (ps *partialSolution) allowedSet(name Name) VersionSet {
-	stack := ps.perPackage[name]
-	full := FullVersionSet()
-	if len(stack) == 0 {
-		return full
-	}
-
-	current := full
-	for _, assign := range stack {
-		if assign.term.Positive {
-			if assign.allowed != nil {
-				current = current.Intersection(assign.allowed)
-			}
-		} else if assign.forbidden != nil {
-			current = current.Intersection(assign.forbidden.Complement())
-		}
-	}
-	return current
-}
-
-func (ps *partialSolution) hasAssignments(name Name) bool {
-	return len(ps.perPackage[name]) > 0
-}
-
-func (ps *partialSolution) addDecision(name Name, version Version) *assignment {
-	ps.decisionLvl++
-	assign := ps.newDecisionAssignment(name, version, ps.decisionLvl)
-	ps.append(assign)
-	return assign
-}
-
-func (ps *partialSolution) seedRoot(name Name, version Version) *assignment {
-	assign := ps.newDecisionAssignment(name, version, 0)
-	ps.append(assign)
-	return assign
-}
-
-var errNoAllowedVersions = errors.New("no versions satisfy constraints")
-
-func (ps *partialSolution) addDerivation(term Term, cause *Incompatibility) (*assignment, bool, error) {
-	currentAllowed := ps.allowedSet(term.Name)
-	newAllowed, err := applyTermToAllowed(currentAllowed, term)
-	if err != nil {
-		return nil, false, err
-	}
-	if newAllowed.IsEmpty() {
-		return nil, false, errNoAllowedVersions
-	}
-
-	assign := &assignment{
-		name:          term.Name,
-		term:          term,
-		kind:          assignmentDerivation,
-		cause:         cause,
-		decisionLevel: ps.decisionLvl,
-		index:         ps.nextIndex,
-	}
-
-	if term.Positive {
-		assign.allowed = newAllowed
-	} else {
-		forbidden, ok := termForbiddenSet(term)
-		if !ok {
-			return nil, false, errors.New("unable to compute forbidden set for term")
-		}
-		assign.forbidden = forbidden
-	}
-
-	changed := !setsEqual(currentAllowed, newAllowed)
-	ps.append(assign)
-
-	if changed && term.Positive {
-		return assign, true, nil
-	}
-
-	if changed && !term.Positive {
-		// record tightened allowance as positive assignment
-		tightening := &assignment{
-			name:          term.Name,
-			term:          termFromAllowedSet(term.Name, newAllowed),
-			kind:          assignmentDerivation,
-			allowed:       newAllowed,
-			cause:         cause,
-			decisionLevel: ps.decisionLvl,
-			index:         ps.nextIndex,
-		}
-		ps.append(tightening)
-		return tightening, true, nil
-	}
-
-	return assign, changed, nil
-}
-
-func (ps *partialSolution) backtrack(level int) {
-	if level < 0 {
-		level = 0
-	}
-
-	for len(ps.assignments) > 0 {
-		last := ps.assignments[len(ps.assignments)-1]
-		if last.decisionLevel <= level {
-			break
-		}
-		ps.assignments = ps.assignments[:len(ps.assignments)-1]
-		stack := ps.perPackage[last.name]
-		if len(stack) > 0 {
-			stack = stack[:len(stack)-1]
-			if len(stack) == 0 {
-				delete(ps.perPackage, last.name)
-			} else {
-				ps.perPackage[last.name] = stack
-			}
-		}
-	}
-
-	ps.decisionLvl = level
-}
-
-func (ps *partialSolution) isComplete() bool {
-	for name, stack := range ps.perPackage {
-		// Skip root assignment
-		if name == ps.root {
-			continue
-		}
-
-		hasDecision := false
-		for _, assign := range stack {
-			if assign.kind == assignmentDecision {
-				hasDecision = true
-				break
-			}
-		}
-		if !hasDecision {
-			return false
-		}
-	}
-	return true
-}
-
-func (ps *partialSolution) nextDecisionCandidate() (Name, bool) {
-	seen := make(map[Name]bool)
-
-	for _, assign := range ps.assignments {
-		name := assign.name
-		if name == ps.root {
-			continue
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-
-		if !ps.hasDecision(name) {
-			return name, true
-		}
-	}
-
-	return EmptyName(), false
-}
-
-func (ps *partialSolution) hasDecision(name Name) bool {
-	stack := ps.perPackage[name]
-	for _, assign := range stack {
-		if assign.kind == assignmentDecision {
-			return true
-		}
-	}
-	return false
-}
-
-func (ps *partialSolution) satisfier(inc *Incompatibility) *assignment {
-	var selected *assignment
-	maxIndex := -1
-
-	for _, term := range inc.Terms {
-		stack := ps.perPackage[term.Name]
-		for i := len(stack) - 1; i >= 0; i-- {
-			assign := stack[i]
-			if termSatisfiedBy(term, assign) {
-				if assign.index > maxIndex {
-					selected = assign
-					maxIndex = assign.index
-				}
-				break
-			}
-		}
-	}
-
-	return selected
-}
-
-func (ps *partialSolution) previousDecisionLevel(inc *Incompatibility, satisfier *assignment) int {
-	level := 0
-
-	for _, term := range inc.Terms {
-		stack := ps.perPackage[term.Name]
-		for i := len(stack) - 1; i >= 0; i-- {
-			assign := stack[i]
-			if assign == satisfier {
-				continue
-			}
-			if termSatisfiedBy(term, assign) && assign.decisionLevel > level {
-				level = assign.decisionLevel
-			}
-		}
-	}
-
-	return level
-}
-
-func (ps *partialSolution) buildSolution() Solution {
-	result := make([]NameVersion, 0)
-	seen := make(map[Name]bool)
-
-	for _, assign := range ps.assignments {
-		if assign.kind != assignmentDecision {
-			continue
-		}
-		if seen[assign.name] {
-			continue
-		}
-		seen[assign.name] = true
-		result = append(result, NameVersion{Name: assign.name, Version: assign.version})
-	}
-
-	return result
-}
-
-func termSatisfiedBy(term Term, assign *assignment) bool {
-	if assign == nil {
-		return false
-	}
-
-	if term.Positive {
-		required, ok := termAllowedSet(term)
-		if !ok {
-			return false
-		}
-		if assign.term.Positive {
-			if assign.allowed == nil {
-				return false
-			}
-			return assign.allowed.IsSubset(required) || assign.allowed.IsDisjoint(required)
-		}
-		if assign.allowed != nil {
-			return assign.allowed.IsSubset(required) || assign.allowed.IsDisjoint(required)
-		}
-		return false
-	}
-
-	forbidden, ok := termForbiddenSet(term)
-	if !ok {
-		return false
-	}
-
-	if assign.term.Positive {
-		if assign.allowed == nil {
-			return false
-		}
-		return assign.allowed.IsDisjoint(forbidden) || assign.allowed.IsSubset(forbidden)
-	}
-
-	if assign.forbidden == nil {
-		return false
-	}
-	return forbidden.IsSubset(assign.forbidden)
-}
-
+// solverState maintains all mutable state during CDCL-based dependency resolution.
+// It coordinates between:
+//   - The partial solution (current assignments and decisions)
+//   - Incompatibilities (learned conflicts and dependency constraints)
+//   - Unit propagation queue (packages needing constraint propagation)
+//
+// The solver state implements the core CDCL algorithm:
+//  1. Make decisions (pick package versions)
+//  2. Propagate constraints (unit propagation)
+//  3. Detect conflicts (incompatibility satisfaction)
+//  4. Analyze conflicts (conflict resolution)
+//  5. Learn clauses (add derived incompatibilities)
+//  6. Backtrack (undo decisions to earlier state)
 type solverState struct {
-	source            Source
-	options           SolverOptions
-	partial           *partialSolution
-	incompatibilities map[Name][]*Incompatibility
-	learned           []*Incompatibility
-	queue             []Name
-	queued            map[Name]bool
+	source            Source                      // Package version and dependency source
+	options           SolverOptions               // Solver configuration
+	partial           *partialSolution            // Current partial solution
+	incompatibilities map[Name][]*Incompatibility // Incompatibilities indexed by package
+	learned           []*Incompatibility          // Learned incompatibilities (for error reporting)
+	queue             []Name                      // Unit propagation queue
+	queued            map[Name]bool               // Tracks which packages are queued
 }
 
+// newSolverState creates a new solver state for the given source and root package.
 func newSolverState(source Source, options SolverOptions, root Name) *solverState {
 	return &solverState{
 		source:            source,
@@ -361,6 +53,7 @@ func newSolverState(source Source, options SolverOptions, root Name) *solverStat
 	}
 }
 
+// enqueue adds a package to the unit propagation queue if not already queued.
 func (st *solverState) enqueue(name Name) {
 	if st.queued[name] {
 		return
@@ -369,6 +62,7 @@ func (st *solverState) enqueue(name Name) {
 	st.queued[name] = true
 }
 
+// dequeue removes and returns the next package from the propagation queue.
 func (st *solverState) dequeue() (Name, bool) {
 	if len(st.queue) == 0 {
 		return EmptyName(), false
@@ -379,6 +73,8 @@ func (st *solverState) dequeue() (Name, bool) {
 	return name, true
 }
 
+// addIncompatibility registers an incompatibility for all involved packages.
+// If tracking is enabled, also adds it to the learned clauses list.
 func (st *solverState) addIncompatibility(incomp *Incompatibility) {
 	for _, term := range incomp.Terms {
 		st.incompatibilities[term.Name] = append(st.incompatibilities[term.Name], incomp)
@@ -388,9 +84,20 @@ func (st *solverState) addIncompatibility(incomp *Incompatibility) {
 	}
 }
 
+// markAssigned is called when a package receives an assignment.
+// Currently a no-op, but provides extension point for future optimizations.
 func (st *solverState) markAssigned(name Name) {
 }
 
+// propagate performs unit propagation starting from a package.
+// Returns a conflict incompatibility if one is detected, or nil if propagation succeeds.
+//
+// Unit propagation iteratively:
+//  1. Dequeues a package from the propagation queue
+//  2. Checks all incompatibilities involving that package
+//  3. If an incompatibility is "almost satisfied" (one unsatisfied term),
+//     derives the negation of that term as a new constraint
+//  4. Enqueues newly constrained packages for further propagation
 func (st *solverState) propagate(start Name) (*Incompatibility, error) {
 	if start != EmptyName() {
 		st.enqueue(start)
@@ -433,15 +140,19 @@ func (st *solverState) propagate(start Name) (*Incompatibility, error) {
 	}
 }
 
+// incompatibilityRelation describes the relationship between an incompatibility
+// and the current partial solution.
 type incompatibilityRelation int
 
 const (
-	relationSatisfied incompatibilityRelation = iota
-	relationAlmostSatisfied
-	relationContradicted
-	relationInconclusive
+	relationSatisfied       incompatibilityRelation = iota // All terms satisfied (conflict!)
+	relationAlmostSatisfied                                // All but one term satisfied (unit propagation)
+	relationContradicted                                   // At least one term contradicted (incompatibility inapplicable)
+	relationInconclusive                                   // Multiple terms unsatisfied (wait for more decisions)
 )
 
+// evaluateIncompatibility determines the relationship between an incompatibility
+// and the current partial solution.
 func (st *solverState) evaluateIncompatibility(inc *Incompatibility) (incompatibilityRelation, *Term, error) {
 	var unsatisfied *Term
 
@@ -472,6 +183,8 @@ func (st *solverState) evaluateIncompatibility(inc *Incompatibility) (incompatib
 	return relationAlmostSatisfied, unsatisfied, nil
 }
 
+// relationForTerm determines the relationship between a single term and the
+// current allowed version set for its package.
 func relationForTerm(term Term, allowed VersionSet, hasAssignment bool) (incompatibilityRelation, error) {
 	if allowed == nil {
 		allowed = FullVersionSet()
@@ -511,6 +224,18 @@ func relationForTerm(term Term, allowed VersionSet, hasAssignment bool) (incompa
 	return relationInconclusive, nil
 }
 
+// resolveIncompatibility performs conflict resolution by merging two incompatibilities.
+// This is the core of CDCL's learned clause generation.
+//
+// Given:
+//   - conflict: An incompatibility satisfied by the current solution
+//   - cause: The incompatibility that caused a specific assignment
+//   - pkg: The package whose assignment we're resolving
+//
+// Returns a new incompatibility with:
+//   - All terms from conflict except pkg's term
+//   - All terms from cause except pkg's term
+//   - Merged terms where both incompatibilities constrain the same package
 func resolveIncompatibility(conflict, cause *Incompatibility, pkg Name) *Incompatibility {
 	terms := make(map[Name]Term)
 
@@ -562,6 +287,9 @@ func resolveIncompatibility(conflict, cause *Incompatibility, pkg Name) *Incompa
 	return NewIncompatibilityConflict(merged, conflict, cause)
 }
 
+// mergeTerms combines two terms for the same package during conflict resolution.
+// For positive terms, takes intersection of version sets.
+// For negative terms, takes union of forbidden sets.
 func mergeTerms(a, b Term) (Term, bool) {
 	if a.Name != b.Name {
 		return Term{}, false
@@ -587,6 +315,8 @@ func mergeTerms(a, b Term) (Term, bool) {
 	}
 }
 
+// registerDependencies adds incompatibilities for a package version's dependencies.
+// Returns a conflict incompatibility if constraint application fails.
 func (st *solverState) registerDependencies(pkg Name, version Version, deps []Term) (*Incompatibility, error) {
 	for _, dep := range deps {
 		incomp := NewIncompatibilityFromDependency(pkg, version, dep)
@@ -602,6 +332,8 @@ func (st *solverState) registerDependencies(pkg Name, version Version, deps []Te
 	return nil, nil
 }
 
+// applyConstraint applies a dependency constraint to the partial solution.
+// Returns a conflict incompatibility if the constraint cannot be satisfied.
 func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Incompatibility, error) {
 	assign, _, err := st.partial.addDerivation(term, cause)
 	if errors.Is(err, errNoAllowedVersions) {
@@ -624,6 +356,13 @@ func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Inco
 	return nil, nil
 }
 
+// pickVersion selects the best available version for a package from the source.
+// Returns the version if found, or (nil, false) if no suitable version exists.
+//
+// Selection strategy:
+//  1. Get all available versions from the source
+//  2. Filter to versions matching current constraints
+//  3. Return the highest version (versions are pre-sorted by source)
 func (st *solverState) pickVersion(name Name) (Version, bool, error) {
 	allowed := st.partial.allowedSet(name)
 	if allowed == nil || allowed.IsEmpty() {
@@ -649,6 +388,17 @@ func (st *solverState) pickVersion(name Name) (Version, bool, error) {
 	return nil, false, nil
 }
 
+// resolveConflict performs conflict analysis and backtracking via CDCL.
+// Returns:
+//   - (nil, pkg, nil) to continue solving with backtracking to decision level for pkg
+//   - (nil, EmptyName, error) if the conflict is unsolvable (root-level conflict)
+//
+// The algorithm:
+//  1. Find the satisfier (most recent assignment satisfying the conflict)
+//  2. If satisfier is a root-level decision, the problem is unsolvable
+//  3. If satisfier is a decision at a higher level than other satisfying assignments,
+//     backtrack to the previous decision level and learn the conflict
+//  4. If satisfier is a derivation, resolve it with its cause and continue
 func (st *solverState) resolveConflict(conflict *Incompatibility) (*Incompatibility, Name, error) {
 	for {
 		satisfier := st.partial.satisfier(conflict)

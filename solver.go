@@ -1,49 +1,45 @@
+// Copyright 2024 The University of Queensland
+// Copyright 2025 Contriboss
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package pubgrub
 
-import (
-	"fmt"
-	"log/slog"
-)
-
-type SolverOptions struct {
-	TrackIncompatibilities bool
-	MaxSteps               int
-	Logger                 *slog.Logger
-}
-
-type SolverOption func(*SolverOptions)
-
-const defaultMaxSteps = 100000
-
-func defaultSolverOptions() SolverOptions {
-	return SolverOptions{
-		TrackIncompatibilities: false,
-		MaxSteps:               defaultMaxSteps,
-	}
-}
-
-func WithIncompatibilityTracking(enabled bool) SolverOption {
-	return func(opts *SolverOptions) {
-		opts.TrackIncompatibilities = enabled
-	}
-}
-
-func WithMaxSteps(steps int) SolverOption {
-	return func(opts *SolverOptions) {
-		if steps <= 0 {
-			opts.MaxSteps = 0
-		} else {
-			opts.MaxSteps = steps
-		}
-	}
-}
-
-func WithLogger(logger *slog.Logger) SolverOption {
-	return func(opts *SolverOptions) {
-		opts.Logger = logger
-	}
-}
-
+// Solver implements the PubGrub dependency resolution algorithm with CDCL.
+//
+// The solver uses Conflict-Driven Clause Learning (CDCL) to efficiently
+// find valid package version assignments that satisfy all dependencies
+// and constraints. It maintains learned incompatibilities to avoid
+// repeating failed resolution attempts.
+//
+// Basic usage:
+//
+//	root := NewRootSource()
+//	root.AddPackage("myapp", EqualsCondition{Version: SimpleVersion("1.0.0")})
+//
+//	source := &InMemorySource{}
+//	// ... populate source with packages ...
+//
+//	solver := NewSolver(root, source)
+//	solution, err := solver.Solve(root.Term())
+//
+// With options:
+//
+//	solver := NewSolverWithOptions(
+//	    []Source{root, source},
+//	    WithIncompatibilityTracking(true),
+//	    WithMaxSteps(10000),
+//	)
 type Solver struct {
 	Source  Source
 	options SolverOptions
@@ -51,17 +47,14 @@ type Solver struct {
 	learned []*Incompatibility
 }
 
-type ErrIterationLimit struct {
-	Steps int
-}
-
-func (e ErrIterationLimit) Error() string {
-	if e.Steps <= 0 {
-		return "solver exceeded iteration limit"
-	}
-	return fmt.Sprintf("solver exceeded iteration limit after %d steps", e.Steps)
-}
-
+// NewSolver creates a new solver with default options from multiple sources.
+// The sources are combined into a single CombinedSource that tries each source in order.
+//
+// Example:
+//
+//	root := NewRootSource()
+//	source := &InMemorySource{}
+//	solver := NewSolver(root, source)
 func NewSolver(sources ...Source) *Solver {
 	return NewSolverWithOptions(sources)
 }

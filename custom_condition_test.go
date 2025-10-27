@@ -39,8 +39,8 @@ func (cc CaretCondition) ToVersionSet() pubgrub.VersionSet {
 
 // Verify CaretCondition implements both interfaces
 var (
-	_ pubgrub.Condition             = CaretCondition{}
-	_ pubgrub.VersionSetConverter   = CaretCondition{}
+	_ pubgrub.Condition           = CaretCondition{}
+	_ pubgrub.VersionSetConverter = CaretCondition{}
 )
 
 func TestCustomCondition_CaretWithSolver(t *testing.T) {
@@ -92,14 +92,14 @@ func TestCustomCondition_CaretSatisfies(t *testing.T) {
 		version string
 		want    bool
 	}{
-		{"1.2.3", true},   // exact match
-		{"1.2.4", true},   // patch bump
-		{"1.3.0", true},   // minor bump
-		{"1.5.0", true},   // higher minor
-		{"2.0.0", false},  // major bump - not satisfied
-		{"1.2.2", false},  // lower patch
-		{"1.1.0", false},  // lower minor
-		{"0.9.9", false},  // lower major
+		{"1.2.3", true},  // exact match
+		{"1.2.4", true},  // patch bump
+		{"1.3.0", true},  // minor bump
+		{"1.5.0", true},  // higher minor
+		{"2.0.0", false}, // major bump - not satisfied
+		{"1.2.2", false}, // lower patch
+		{"1.1.0", false}, // lower minor
+		{"0.9.9", false}, // lower major
 	}
 
 	for _, tt := range tests {
