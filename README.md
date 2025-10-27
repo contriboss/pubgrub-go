@@ -8,12 +8,12 @@ A comprehensive Go implementation of the PubGrub version solving algorithm with 
 
 ## Features
 
-✨ **Semantic Versioning** - Full semver support with major.minor.patch ordering
-📊 **Version Ranges** - Complex constraints like `>=1.0.0, <2.0.0 || >=3.0.0`
-🔍 **Enhanced Error Messages** - Human-readable explanations of why resolution fails
-🚀 **CDCL Solver** - Conflict-driven clause learning with unit propagation
-🧪 **Well Tested** - Comprehensive test suite with strong coverage
-⚡ **Production Ready** - Handles complex dependency graphs efficiently
+- ✨ **Semantic Versioning** - Full semver support with major.minor.patch ordering
+- 📊 **Version Ranges** - Complex constraints like `>=1.0.0, <2.0.0 || >=3.0.0`
+- 🔍 **Enhanced Error Messages** - Human-readable explanations of why resolution fails
+- 🚀 **CDCL Solver** - Conflict-driven clause learning with unit propagation
+- 🧪 **Well Tested** - Comprehensive test suite with strong coverage
+- ⚡ **Production Ready** - Handles complex dependency graphs efficiently
 
 ## Origin
 
