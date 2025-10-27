@@ -67,6 +67,48 @@ type Condition interface {
 	Satisfies(ver Version) bool
 }
 
+// VersionSetConverter is an optional interface that Condition implementations
+// can provide to enable conversion to VersionSet for use with the CDCL solver.
+//
+// The CDCL solver needs to perform set operations (intersection, union, complement)
+// on version constraints. Conditions that implement this interface can participate
+// in these operations, enabling them to work with unit propagation and conflict
+// resolution.
+//
+// Built-in conditions (EqualsCondition, VersionSetCondition) are already handled
+// by the solver. Custom condition types should implement this interface to enable
+// solver support.
+//
+// Example custom condition:
+//
+//	type SemverCaretCondition struct {
+//	    Base SemanticVersion
+//	}
+//
+//	func (sc SemverCaretCondition) String() string {
+//	    return fmt.Sprintf("^%s", sc.Base)
+//	}
+//
+//	func (sc SemverCaretCondition) Satisfies(ver Version) bool {
+//	    sv, ok := ver.(SemanticVersion)
+//	    if !ok {
+//	        return false
+//	    }
+//	    return sv.Major == sc.Base.Major &&
+//	           sv.Sort(sc.Base) >= 0 &&
+//	           sv.Major == sc.Base.Major
+//	}
+//
+//	func (sc SemverCaretCondition) ToVersionSet() VersionSet {
+//	    // Convert ^1.2.3 to >=1.2.3 <2.0.0
+//	    upper := SemanticVersion{Major: sc.Base.Major + 1}
+//	    set := &VersionIntervalSet{}
+//	    return set.Interval(sc.Base, true, upper, false)
+//	}
+type VersionSetConverter interface {
+	ToVersionSet() VersionSet
+}
+
 type EqualsCondition struct {
 	Version Version
 }

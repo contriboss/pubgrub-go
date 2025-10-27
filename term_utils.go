@@ -22,6 +22,8 @@ func termAllowedSet(term Term) (VersionSet, bool) {
 			return (&VersionIntervalSet{}).Full(), true
 		}
 		return cond.Set, true
+	case VersionSetConverter:
+		return cond.ToVersionSet(), true
 	default:
 		return nil, false
 	}
@@ -47,6 +49,8 @@ func termForbiddenSet(term Term) (VersionSet, bool) {
 			return (&VersionIntervalSet{}).Full(), true
 		}
 		return cond.Set, true
+	case VersionSetConverter:
+		return cond.ToVersionSet(), true
 	default:
 		return nil, false
 	}

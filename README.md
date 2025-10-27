@@ -157,6 +157,43 @@ cond := pubgrub.NewVersionSetCondition(set)
 // Wildcard: "*" (any version)
 ```
 
+### Custom Conditions
+
+You can create custom version constraints by implementing the `Condition` interface and optionally the `VersionSetConverter` interface for CDCL solver support:
+
+```go
+// Custom caret constraint (like npm's ^1.2.3)
+type CaretCondition struct {
+    Base *SemanticVersion
+}
+
+func (cc CaretCondition) String() string {
+    return fmt.Sprintf("^%s", cc.Base)
+}
+
+func (cc CaretCondition) Satisfies(ver Version) bool {
+    sv, ok := ver.(*SemanticVersion)
+    if !ok { return false }
+    return sv.Major == cc.Base.Major && sv.Sort(cc.Base) >= 0
+}
+
+// Implement VersionSetConverter to enable CDCL solver support
+func (cc CaretCondition) ToVersionSet() VersionSet {
+    rangeStr := fmt.Sprintf(">=%d.%d.%d, <%d.0.0",
+        cc.Base.Major, cc.Base.Minor, cc.Base.Patch,
+        cc.Base.Major+1)
+    set, _ := ParseVersionRange(rangeStr)
+    return set
+}
+
+// Use it with the solver
+base, _ := ParseSemanticVersion("1.2.0")
+condition := CaretCondition{Base: base}
+root.AddPackage("mylib", condition)
+```
+
+The `VersionSetConverter` interface enables your custom condition to participate in set operations (union, intersection, complement) required by the CDCL solver. Without it, custom conditions work for simple resolution but may fail in complex scenarios requiring conflict analysis.
+
 ### Error Reporting
 
 ```go
@@ -218,6 +255,7 @@ fmt.Printf("Cache hit rate: %.1f%%\n", stats.OverallHitRate * 100)
 - **`Name`** - Package name identifier
 - **`Version`** - Interface for version representation
 - **`Condition`** - Interface for version constraints
+- **`VersionSetConverter`** - Optional interface for custom conditions to enable CDCL solver support
 - **`Term`** - Package name with constraint
 - **`Source`** - Package version/dependency queries
 - **`Solution`** - Resolved package versions
