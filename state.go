@@ -398,17 +398,24 @@ func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Inco
 	return nil, nil
 }
 
+const (
+	versionScoreBaseline        = 100
+	versionScoreUnboundedBonus  = 1000
+	versionScoreConflictPenalty = -1_000_000
+)
+
 // pickVersion selects the best available version for a package from the source.
 // Returns the version if found, or (nil, false) if no suitable version exists.
 //
 // Selection strategy:
 //  1. Get all available versions from the source
 //  2. Filter to versions matching current constraints
-//  3. Return the highest version (versions are pre-sorted by source)
-func (st *solverState) pickVersion(name Name) (Version, bool, error) {
+//  3. Use lookahead heuristic: prefer versions whose dependencies have larger
+//     search spaces (less constrained), falling back to highest version on ties
+func (st *solverState) pickVersion(name Name) (Version, bool, int, error) {
 	allowed := st.partial.allowedSet(name)
 	if allowed == nil || allowed.IsEmpty() {
-		return nil, false, nil
+		return nil, false, 0, nil
 	}
 
 	versions, err := st.source.GetVersions(name)
@@ -416,18 +423,88 @@ func (st *solverState) pickVersion(name Name) (Version, bool, error) {
 		var pkgErr *PackageNotFoundError
 		var verErr *PackageVersionNotFoundError
 		if errors.As(err, &pkgErr) || errors.As(err, &verErr) {
-			return nil, false, nil
+			return nil, false, 0, nil
 		}
-		return nil, false, err
+		return nil, false, 0, err
 	}
+
+	var bestVer Version
+	bestScore := versionScoreConflictPenalty
+	found := false
+
+	// Walk backwards (newest first) and score each candidate
 	for i := len(versions) - 1; i >= 0; i-- {
 		ver := versions[i]
-		if allowed.Contains(ver) {
-			return ver, true, nil
+		if !allowed.Contains(ver) {
+			continue
+		}
+
+		// Score this version by looking at its dependencies
+		score := st.scoreVersionByDependencies(name, ver)
+
+		// Higher score = better (less constrained dependencies)
+		// On tie, prefer the newer (higher) version.
+		if !found || score > bestScore || (score == bestScore && bestVer != nil && ver.Sort(bestVer) > 0) {
+			bestVer = ver
+			bestScore = score
+			found = true
 		}
 	}
 
-	return nil, false, nil
+	if !found {
+		return nil, false, 0, nil
+	}
+
+	return bestVer, true, bestScore, nil
+}
+
+// scoreVersionByDependencies estimates how "good" a version choice is by
+// analyzing the flexibility of its dependencies. Higher scores indicate
+// dependencies with more available versions (less constrained).
+//
+// This helps avoid picking versions whose dependencies will immediately
+// lead to conflicts or narrow the search space too aggressively.
+func (st *solverState) scoreVersionByDependencies(name Name, ver Version) int {
+	// Fetch dependencies for this version
+	deps, err := st.source.GetDependencies(name, ver)
+	if err != nil {
+		// If we can't fetch dependencies, assign neutral score
+		return versionScoreBaseline
+	}
+	totalScore := versionScoreBaseline
+	if len(deps) == 0 {
+		return totalScore
+	}
+
+	for _, dep := range deps {
+		// For each dependency, estimate how many versions it could accept
+		// We'll use a simple heuristic: tighter constraints = lower score
+		depAllowed := st.partial.allowedSet(dep.Name)
+		projected, err := applyTermToAllowed(depAllowed, dep)
+		if err != nil {
+			// If we can't project the constraint, treat it as neutral.
+			totalScore += versionScoreBaseline
+			continue
+		}
+		score := constraintScoreForSet(projected)
+		switch {
+		case score == constraintScoreEmpty:
+			// No versions satisfy this dependency under the current assumptions.
+			return versionScoreConflictPenalty
+		case score >= constraintScoreUnbounded:
+			totalScore += versionScoreUnboundedBonus
+		case score == constraintScoreUnknown:
+			totalScore += versionScoreBaseline
+		default:
+			if adjustment := versionScoreBaseline - score; adjustment > 0 {
+				totalScore += adjustment
+			} else {
+				totalScore++
+			}
+		}
+	}
+
+	return totalScore
 }
 
 // resolveConflict performs conflict analysis and backtracking via CDCL.

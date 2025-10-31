@@ -21,6 +21,14 @@ import (
 	"strings"
 )
 
+const (
+	constraintScoreEmpty     = 0
+	constraintScoreUnknown   = 1000
+	constraintScoreUnbounded = 1_000_000
+
+	maxConstraintPriority = int(^uint(0) >> 1)
+)
+
 // partialSolution maintains the evolving solution during dependency resolution.
 // It tracks assignments (decisions and derivations) organized by package name
 // and decision level, supporting efficient backtracking and version set queries.
@@ -233,8 +241,15 @@ func (ps *partialSolution) isComplete() bool {
 
 // nextDecisionCandidate finds the next package that needs a version decision.
 // Returns the package name and true if found, or EmptyName and false if none.
+//
+// Heuristic: Prefer packages with tighter constraints (smaller allowed sets)
+// to reduce search space early. This helps avoid exploring dead ends when
+// there are many interdependent packages.
 func (ps *partialSolution) nextDecisionCandidate() (Name, bool) {
 	seen := make(map[Name]bool)
+	bestScore := maxConstraintPriority
+	bestName := EmptyName()
+	found := false
 
 	for _, assign := range ps.assignments {
 		name := assign.name
@@ -246,12 +261,63 @@ func (ps *partialSolution) nextDecisionCandidate() (Name, bool) {
 		}
 		seen[name] = true
 
-		if !ps.hasDecision(name) {
-			return name, true
+		if ps.hasDecision(name) {
+			continue
+		}
+
+		score := ps.constraintScore(name)
+		if !found || score < bestScore || (score == bestScore && name.Value() < bestName.Value()) {
+			bestScore = score
+			bestName = name
+			found = true
 		}
 	}
 
-	return EmptyName(), false
+	if !found {
+		return EmptyName(), false
+	}
+
+	return bestName, true
+}
+
+// constraintScore estimates how constrained a package is.
+// Lower scores indicate tighter constraints (should be resolved earlier).
+// Returns a large number if unconstrained (to deprioritize).
+func (ps *partialSolution) constraintScore(name Name) int {
+	return constraintScoreForSet(ps.allowedSet(name))
+}
+
+// constraintScoreForSet scores a VersionSet using the same heuristic as constraintScore.
+func constraintScoreForSet(allowed VersionSet) int {
+	if allowed == nil {
+		return constraintScoreUnknown
+	}
+
+	if intervalSet, ok := allowed.(*VersionIntervalSet); ok {
+		numIntervals := len(intervalSet.intervals)
+		if numIntervals == 0 {
+			// Empty set - should fail fast, highest priority
+			return constraintScoreEmpty
+		}
+		if numIntervals == 1 {
+			interval := intervalSet.intervals[0]
+			// Check if fully unbounded (negative infinity to positive infinity)
+			if interval.lower.isNegInfinity() && interval.upper.isPosInfinity() {
+				// Fully unbounded - lowest priority
+				return constraintScoreUnbounded
+			}
+		}
+		// More intervals = more holes/exclusions = typically tighter
+		// But a single tight interval is also good
+		// Use interval count as proxy for constraint tightness
+		return numIntervals
+	}
+
+	// Fallback: if we can't analyze the set structure, use medium priority
+	if allowed.IsEmpty() {
+		return constraintScoreEmpty // Empty = impossible, resolve immediately to fail fast
+	}
+	return constraintScoreUnknown // Unknown structure = medium priority
 }
 
 // hasDecision returns true if there's a decision assignment for the package.

@@ -188,14 +188,18 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 			allowedStr = allowed.String()
 		}
 		pending := state.partial.pendingPackages()
+
+		// Log constraint score for the selected package (heuristic debugging)
+		constraintScore := state.partial.constraintScore(nextPkg)
 		s.debug("selecting package",
 			"step", steps,
 			"package", nextPkg,
 			"allowed", allowedStr,
+			"constraint_score", constraintScore,
 			"pending", joinNameValues(pending),
 		)
 
-		ver, found, err := state.pickVersion(nextPkg)
+		ver, found, score, err := state.pickVersion(nextPkg)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +214,14 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 			continue
 		}
 
-		s.debug("making decision", "step", steps, "package", nextPkg, "version", ver)
+		// Log dependency score for the chosen version (heuristic debugging)
+		depScore := score
+		s.debug("making decision",
+			"step", steps,
+			"package", nextPkg,
+			"version", ver,
+			"dep_score", depScore,
+		)
 
 		assign := state.partial.addDecision(nextPkg, ver)
 		state.traceAssignment("decision", assign)
