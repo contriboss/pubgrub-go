@@ -15,6 +15,8 @@
 
 package pubgrub
 
+import "strings"
+
 // Solver implements the PubGrub dependency resolution algorithm with CDCL.
 //
 // The solver uses Conflict-Driven Clause Learning (CDCL) to efficiently
@@ -118,6 +120,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 
 	assign := state.partial.seedRoot(root.Name, version)
 	state.markAssigned(root.Name)
+	state.traceAssignment("seed", assign)
 
 	s.debug("seeded root", "package", root.Name, "version", version)
 
@@ -179,7 +182,18 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 			return state.partial.buildSolution(), nil
 		}
 
-		s.debug("selecting package", "step", steps, "package", nextPkg)
+		allowed := state.partial.allowedSet(nextPkg)
+		allowedStr := "<nil>"
+		if allowed != nil {
+			allowedStr = allowed.String()
+		}
+		pending := state.partial.pendingPackages()
+		s.debug("selecting package",
+			"step", steps,
+			"package", nextPkg,
+			"allowed", allowedStr,
+			"pending", joinNameValues(pending),
+		)
 
 		ver, found, err := state.pickVersion(nextPkg)
 		if err != nil {
@@ -199,6 +213,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 		s.debug("making decision", "step", steps, "package", nextPkg, "version", ver)
 
 		assign := state.partial.addDecision(nextPkg, ver)
+		state.traceAssignment("decision", assign)
 		state.markAssigned(assign.name)
 
 		deps, err := s.Source.GetDependencies(nextPkg, ver)
@@ -215,6 +230,17 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 
 		state.enqueue(assign.name)
 	}
+}
+
+func joinNameValues(names []Name) string {
+	if len(names) == 0 {
+		return ""
+	}
+	values := make([]string, len(names))
+	for i, name := range names {
+		values[i] = name.Value()
+	}
+	return strings.Join(values, ",")
 }
 
 func extractDecisionVersion(root Term) (Version, error) {

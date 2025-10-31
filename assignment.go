@@ -15,6 +15,8 @@
 
 package pubgrub
 
+import "fmt"
+
 // assignmentKind distinguishes between decision and derivation assignments.
 // Decision assignments are explicit choices made by the solver (version selections).
 // Derivation assignments are constraints derived from incompatibilities via unit propagation.
@@ -48,4 +50,37 @@ type assignment struct {
 // rather than a derived constraint.
 func (a *assignment) isDecision() bool {
 	return a.kind == assignmentDecision
+}
+
+// describe returns a compact string describing the assignment.
+// Used exclusively for debug logging to keep the hot path free of allocations.
+func (a *assignment) describe() string {
+	if a == nil {
+		return "<nil>"
+	}
+
+	kind := "derivation"
+	if a.isDecision() {
+		kind = "decision"
+	}
+
+	version := "<nil>"
+	if a.version != nil {
+		version = a.version.String()
+	}
+
+	desc := fmt.Sprintf("%s idx=%d lvl=%d kind=%s term=%s version=%s",
+		a.name.Value(), a.index, a.decisionLevel, kind, a.term.String(), version)
+
+	if a.allowed != nil {
+		desc += fmt.Sprintf(" allowed=%s", a.allowed.String())
+	}
+	if a.forbidden != nil {
+		desc += fmt.Sprintf(" forbidden=%s", a.forbidden.String())
+	}
+	if a.cause != nil {
+		desc += fmt.Sprintf(" cause=\"%s\"", a.cause.String())
+	}
+
+	return desc
 }

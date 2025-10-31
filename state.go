@@ -89,6 +89,24 @@ func (st *solverState) addIncompatibility(incomp *Incompatibility) {
 func (st *solverState) markAssigned(name Name) {
 }
 
+func (st *solverState) debug(msg string, args ...any) {
+	if st.options.Logger == nil {
+		return
+	}
+	st.options.Logger.Debug(msg, args...)
+}
+
+func (st *solverState) traceAssignment(event string, assign *assignment) {
+	if st.options.Logger == nil || assign == nil {
+		return
+	}
+	st.options.Logger.Debug("assignment",
+		"event", event,
+		"package", assign.name.Value(),
+		"detail", assign.describe(),
+	)
+}
+
 // propagate performs unit propagation starting from a package.
 // Returns a conflict incompatibility if one is detected, or nil if propagation succeeds.
 //
@@ -117,12 +135,22 @@ func (st *solverState) propagate(start Name) (*Incompatibility, error) {
 
 			switch relation {
 			case relationSatisfied:
+				st.debug("conflict detected during propagation",
+					"package", pkg.Value(),
+					"incompatibility", inc.String(),
+				)
 				return inc, nil
 			case relationAlmostSatisfied:
 				if unsatisfied == nil {
 					continue
 				}
-				assign, changed, err := st.partial.addDerivation(unsatisfied.Negate(), inc)
+				derived := unsatisfied.Negate()
+				st.debug("unit propagation",
+					"package", pkg.Value(),
+					"incompatibility", inc.String(),
+					"derived_term", derived.String(),
+				)
+				assign, changed, err := st.partial.addDerivation(derived, inc)
 				if errors.Is(err, errNoAllowedVersions) {
 					return inc, nil
 				}
@@ -130,9 +158,14 @@ func (st *solverState) propagate(start Name) (*Incompatibility, error) {
 					return nil, err
 				}
 				if assign != nil {
+					st.traceAssignment("derivation", assign)
 					st.markAssigned(assign.name)
 				}
 				if changed && assign != nil {
+					st.debug("enqueueing package after derivation",
+						"package", assign.name.Value(),
+						"term", assign.term.String(),
+					)
 					st.enqueue(assign.name)
 				}
 			}
@@ -337,6 +370,14 @@ func (st *solverState) registerDependencies(pkg Name, version Version, deps []Te
 func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Incompatibility, error) {
 	assign, _, err := st.partial.addDerivation(term, cause)
 	if errors.Is(err, errNoAllowedVersions) {
+		causeDesc := "<nil>"
+		if cause != nil {
+			causeDesc = cause.String()
+		}
+		st.debug("constraint left no allowed versions",
+			"term", term.String(),
+			"cause", causeDesc,
+		)
 		base := NewIncompatibilityNoVersions(term)
 		if cause != nil {
 			terms := make([]Term, 0, len(cause.Terms)+len(base.Terms))
@@ -350,6 +391,7 @@ func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Inco
 		return nil, err
 	}
 	if assign != nil {
+		st.traceAssignment("dependency-constraint", assign)
 		st.markAssigned(assign.name)
 		st.enqueue(assign.name)
 	}
@@ -407,6 +449,12 @@ func (st *solverState) resolveConflict(conflict *Incompatibility) (*Incompatibil
 		}
 
 		prevLevel := st.partial.previousDecisionLevel(conflict, satisfier)
+		st.debug("conflict analysis iteration",
+			"conflict", conflict.String(),
+			"satisfier", satisfier.describe(),
+			"satisfier_level", satisfier.decisionLevel,
+			"previous_level", prevLevel,
+		)
 
 		if satisfier.decisionLevel == 0 && satisfier.isDecision() {
 			return nil, EmptyName(), NewNoSolutionError(conflict)
@@ -414,6 +462,14 @@ func (st *solverState) resolveConflict(conflict *Incompatibility) (*Incompatibil
 
 		if satisfier.isDecision() && prevLevel < satisfier.decisionLevel {
 			st.partial.backtrack(prevLevel)
+			if st.options.Logger != nil {
+				st.options.Logger.Debug("backtracked after conflict",
+					"pivot", satisfier.name.Value(),
+					"target_level", prevLevel,
+					"learned", conflict.String(),
+					"state", st.partial.snapshot(),
+				)
+			}
 			st.addIncompatibility(conflict)
 			return nil, satisfier.name, nil
 		}
@@ -422,6 +478,14 @@ func (st *solverState) resolveConflict(conflict *Incompatibility) (*Incompatibil
 			return nil, EmptyName(), errors.New("derived assignment missing cause")
 		}
 
+		st.debug("resolving with cause",
+			"pivot", satisfier.name.Value(),
+			"cause", satisfier.cause.String(),
+		)
 		conflict = resolveIncompatibility(conflict, satisfier.cause, satisfier.name)
+		st.debug("derived new conflict",
+			"pivot", satisfier.name.Value(),
+			"conflict", conflict.String(),
+		)
 	}
 }

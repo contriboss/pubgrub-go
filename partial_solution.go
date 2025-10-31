@@ -15,7 +15,11 @@
 
 package pubgrub
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
 
 // partialSolution maintains the evolving solution during dependency resolution.
 // It tracks assignments (decisions and derivations) organized by package name
@@ -326,6 +330,38 @@ func (ps *partialSolution) buildSolution() Solution {
 	return result
 }
 
+// snapshot returns a human-readable representation of the partial solution.
+// Intended for debug logging to understand solver state during complex conflicts.
+func (ps *partialSolution) snapshot() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "decision_level=%d next_index=%d assignments=%d\n", ps.decisionLvl, ps.nextIndex, len(ps.assignments))
+	for _, assign := range ps.assignments {
+		fmt.Fprintf(&b, "  %s\n", assign.describe())
+	}
+	return b.String()
+}
+
+// pendingPackages lists packages that have constraints but no decided version yet.
+// Used for diagnostics when analysing package selection order.
+func (ps *partialSolution) pendingPackages() []Name {
+	pending := make([]Name, 0)
+	seen := make(map[Name]bool)
+
+	for _, assign := range ps.assignments {
+		name := assign.name
+		if name == ps.root || seen[name] {
+			continue
+		}
+		seen[name] = true
+
+		if !ps.hasDecision(name) {
+			pending = append(pending, name)
+		}
+	}
+
+	return pending
+}
+
 // termSatisfiedBy checks if an assignment satisfies a term in an incompatibility.
 func termSatisfiedBy(term Term, assign *assignment) bool {
 	if assign == nil {
@@ -341,10 +377,10 @@ func termSatisfiedBy(term Term, assign *assignment) bool {
 			if assign.allowed == nil {
 				return false
 			}
-			return assign.allowed.IsSubset(required) || assign.allowed.IsDisjoint(required)
+			return assign.allowed.IsSubset(required)
 		}
 		if assign.allowed != nil {
-			return assign.allowed.IsSubset(required) || assign.allowed.IsDisjoint(required)
+			return assign.allowed.IsSubset(required)
 		}
 		return false
 	}
@@ -358,7 +394,7 @@ func termSatisfiedBy(term Term, assign *assignment) bool {
 		if assign.allowed == nil {
 			return false
 		}
-		return assign.allowed.IsDisjoint(forbidden) || assign.allowed.IsSubset(forbidden)
+		return assign.allowed.IsDisjoint(forbidden)
 	}
 
 	if assign.forbidden == nil {

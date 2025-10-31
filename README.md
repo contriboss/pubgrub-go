@@ -14,6 +14,7 @@ A comprehensive Go implementation of the PubGrub version solving algorithm with 
 - 🚀 **CDCL Solver** - Conflict-driven clause learning with unit propagation
 - 🧪 **Well Tested** - Comprehensive test suite with strong coverage
 - ⚡ **Production Ready** - Handles complex dependency graphs efficiently
+- 🪵 **Structured Debug Logging** - Plug in `log/slog` via `WithLogger` for rich solver traces
 
 ## Origin
 
@@ -124,6 +125,37 @@ func main() {
 
     for _, nv := range solution {
         fmt.Printf("✓ %s: %s\n", nv.Name, nv.Version)
+    }
+}
+```
+
+### Debug Logging
+
+```go
+package main
+
+import (
+    "log/slog"
+    "os"
+
+    "github.com/contriboss/pubgrub-go"
+)
+
+func main() {
+    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+        Level: slog.LevelDebug,
+    }))
+
+    root := pubgrub.NewRootSource()
+    source := &pubgrub.InMemorySource{}
+
+    solver := pubgrub.NewSolverWithOptions(
+        []pubgrub.Source{root, source},
+        pubgrub.WithLogger(logger),
+    )
+
+    if _, err := solver.Solve(root.Term()); err != nil {
+        logger.Error("resolution failed", "err", err)
     }
 }
 ```
@@ -365,7 +397,7 @@ Contributions welcome! Please:
 This package is derived from the tinyrange project:
 - **Original Repository:** https://github.com/tinyrange/tinyrange
 - **Original Package:** experimental/pubgrub
-- **Version:** v0.2.7 (Oct 27, 2025)
+- **Version:** v0.3.1 (Oct 31, 2025)
 - **Original Copyright:** Copyright 2024 The University of Queensland
 - **Original License:** Apache 2.0
 
