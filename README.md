@@ -397,7 +397,7 @@ Contributions welcome! Please:
 This package is derived from the tinyrange project:
 - **Original Repository:** https://github.com/tinyrange/tinyrange
 - **Original Package:** experimental/pubgrub
-- **Version:** v0.3.2 (Nov 1, 2025)
+- **Version:** v0.3.3 (Nov 1, 2025)
 - **Original Copyright:** Copyright 2024 The University of Queensland
 - **Original License:** Apache 2.0
 

@@ -102,6 +102,29 @@ func (s *Solver) ClearIncompatibilities() {
 	s.learned = s.learned[:0]
 }
 
+func (s *Solver) logHeuristicStats(state *solverState) {
+	if state == nil {
+		return
+	}
+
+	totalLookups := state.depScoreCacheHits + state.depScoreCacheMisses
+	if totalLookups == 0 && state.depScoreAPICalls == 0 {
+		return
+	}
+
+	hitRate := 0.0
+	if totalLookups > 0 {
+		hitRate = float64(state.depScoreCacheHits) / float64(totalLookups)
+	}
+
+	s.debug("heuristic stats",
+		"cache_hits", state.depScoreCacheHits,
+		"cache_misses", state.depScoreCacheMisses,
+		"hit_rate", hitRate,
+		"api_calls", state.depScoreAPICalls,
+	)
+}
+
 func (s *Solver) debug(msg string, args ...any) {
 	if logger := s.options.Logger; logger != nil {
 		logger.Debug(msg, args...)
@@ -112,6 +135,7 @@ func (s *Solver) Solve(root Term) (Solution, error) {
 	s.debug("starting solver", "root", root)
 
 	state := newSolverState(s.Source, s.options, root.Name)
+	defer s.logHeuristicStats(state)
 
 	version, err := extractDecisionVersion(root)
 	if err != nil {

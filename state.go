@@ -38,6 +38,11 @@ type solverState struct {
 	learned           []*Incompatibility          // Learned incompatibilities (for error reporting)
 	queue             []Name                      // Unit propagation queue
 	queued            map[Name]bool               // Tracks which packages are queued
+
+	depScoreCache       map[string]int // Memoized dependency scores: "name@version" -> score
+	depScoreCacheHits   int            // Number of cache hits
+	depScoreCacheMisses int            // Number of cache misses
+	depScoreAPICalls    int            // Number of source.GetDependencies calls
 }
 
 // newSolverState creates a new solver state for the given source and root package.
@@ -50,6 +55,7 @@ func newSolverState(source Source, options SolverOptions, root Name) *solverStat
 		learned:           make([]*Incompatibility, 0),
 		queue:             make([]Name, 0),
 		queued:            make(map[Name]bool),
+		depScoreCache:     make(map[string]int),
 	}
 }
 
@@ -402,6 +408,8 @@ const (
 	versionScoreBaseline        = 100
 	versionScoreUnboundedBonus  = 1000
 	versionScoreConflictPenalty = -1_000_000
+
+	maxVersionScoreCandidates = 5
 )
 
 // pickVersion selects the best available version for a package from the source.
@@ -428,30 +436,36 @@ func (st *solverState) pickVersion(name Name) (Version, bool, int, error) {
 		return nil, false, 0, err
 	}
 
-	var bestVer Version
-	bestScore := versionScoreConflictPenalty
-	found := false
-
-	// Walk backwards (newest first) and score each candidate
-	for i := len(versions) - 1; i >= 0; i-- {
+	candidates := make([]Version, 0, maxVersionScoreCandidates)
+	for i := len(versions) - 1; i >= 0 && len(candidates) < maxVersionScoreCandidates; i-- {
 		ver := versions[i]
-		if !allowed.Contains(ver) {
-			continue
-		}
-
-		// Score this version by looking at its dependencies
-		score := st.scoreVersionByDependencies(name, ver)
-
-		// Higher score = better (less constrained dependencies)
-		// On tie, prefer the newer (higher) version.
-		if !found || score > bestScore || (score == bestScore && bestVer != nil && ver.Sort(bestVer) > 0) {
-			bestVer = ver
-			bestScore = score
-			found = true
+		if allowed.Contains(ver) {
+			candidates = append(candidates, ver)
 		}
 	}
 
-	if !found {
+	if len(candidates) == 0 {
+		return nil, false, 0, nil
+	}
+
+	var bestVer Version
+	bestScore := versionScoreConflictPenalty
+	for _, ver := range candidates {
+		score := st.scoreVersionByDependencies(name, ver)
+		switch {
+		case bestVer == nil:
+			bestVer = ver
+			bestScore = score
+		case score > bestScore:
+			bestVer = ver
+			bestScore = score
+		case score == bestScore && ver.Sort(bestVer) > 0:
+			bestVer = ver
+			bestScore = score
+		}
+	}
+
+	if bestVer == nil {
 		return nil, false, 0, nil
 	}
 
@@ -465,12 +479,31 @@ func (st *solverState) pickVersion(name Name) (Version, bool, int, error) {
 // This helps avoid picking versions whose dependencies will immediately
 // lead to conflicts or narrow the search space too aggressively.
 func (st *solverState) scoreVersionByDependencies(name Name, ver Version) int {
-	// Fetch dependencies for this version
+	if st.depScoreCache == nil {
+		st.depScoreCache = make(map[string]int)
+	}
+
+	key := dependencyScoreKey(name, ver)
+	if score, ok := st.depScoreCache[key]; ok {
+		st.depScoreCacheHits++
+		return score
+	}
+
+	st.depScoreCacheMisses++
+	score := st.computeDependencyScore(name, ver)
+	st.depScoreCache[key] = score
+	return score
+}
+
+func (st *solverState) computeDependencyScore(name Name, ver Version) int {
+	st.depScoreAPICalls++
+
 	deps, err := st.source.GetDependencies(name, ver)
 	if err != nil {
 		// If we can't fetch dependencies, assign neutral score
 		return versionScoreBaseline
 	}
+
 	totalScore := versionScoreBaseline
 	if len(deps) == 0 {
 		return totalScore
@@ -505,6 +538,10 @@ func (st *solverState) scoreVersionByDependencies(name Name, ver Version) int {
 	}
 
 	return totalScore
+}
+
+func dependencyScoreKey(name Name, ver Version) string {
+	return name.Value() + "@" + ver.String()
 }
 
 // resolveConflict performs conflict analysis and backtracking via CDCL.
