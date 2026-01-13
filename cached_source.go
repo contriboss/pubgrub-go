@@ -1,6 +1,9 @@
 package pubgrub
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // CachedSource wraps a Source and caches GetVersions and GetDependencies calls
 // to improve performance when the same queries are made repeatedly.
@@ -22,6 +25,8 @@ import "fmt"
 // assumes that version lists and dependencies are immutable during solving.
 type CachedSource struct {
 	source Source
+
+	mu sync.Mutex
 
 	// Cache for GetVersions results
 	versionsCache     map[Name][]Version
@@ -45,13 +50,17 @@ func NewCachedSource(source Source) *CachedSource {
 
 // GetVersions returns all available versions for a package, caching the result.
 func (c *CachedSource) GetVersions(name Name) ([]Version, error) {
+	c.mu.Lock()
 	c.versionsCalls++
 
 	// Check cache first
 	if versions, ok := c.versionsCache[name]; ok {
 		c.versionsCacheHits++
-		return versions, nil
+		out := cloneVersions(versions)
+		c.mu.Unlock()
+		return out, nil
 	}
+	c.mu.Unlock()
 
 	// Cache miss - fetch from underlying source
 	versions, err := c.source.GetVersions(name)
@@ -59,13 +68,19 @@ func (c *CachedSource) GetVersions(name Name) ([]Version, error) {
 		return nil, err
 	}
 
+	cloned := cloneVersions(versions)
+
 	// Store in cache
-	c.versionsCache[name] = versions
-	return versions, nil
+	c.mu.Lock()
+	c.versionsCache[name] = cloned
+	c.mu.Unlock()
+
+	return cloneVersions(cloned), nil
 }
 
 // GetDependencies returns dependencies for a specific package version, caching the result.
 func (c *CachedSource) GetDependencies(name Name, version Version) ([]Term, error) {
+	c.mu.Lock()
 	c.depsCalls++
 
 	// Create cache key from name and version
@@ -74,8 +89,11 @@ func (c *CachedSource) GetDependencies(name Name, version Version) ([]Term, erro
 	// Check cache first
 	if deps, ok := c.depsCache[key]; ok {
 		c.depsCacheHits++
-		return deps, nil
+		out := cloneTerms(deps)
+		c.mu.Unlock()
+		return out, nil
 	}
+	c.mu.Unlock()
 
 	// Cache miss - fetch from underlying source
 	deps, err := c.source.GetDependencies(name, version)
@@ -83,9 +101,14 @@ func (c *CachedSource) GetDependencies(name Name, version Version) ([]Term, erro
 		return nil, err
 	}
 
+	cloned := cloneTerms(deps)
+
 	// Store in cache
-	c.depsCache[key] = deps
-	return deps, nil
+	c.mu.Lock()
+	c.depsCache[key] = cloned
+	c.mu.Unlock()
+
+	return cloneTerms(cloned), nil
 }
 
 // CacheStats returns statistics about cache performance.
@@ -105,6 +128,7 @@ type CacheStats struct {
 
 // GetCacheStats returns cache performance statistics.
 func (c *CachedSource) GetCacheStats() CacheStats {
+	c.mu.Lock()
 	stats := CacheStats{
 		VersionsCalls:     c.versionsCalls,
 		VersionsCacheHits: c.versionsCacheHits,
@@ -113,6 +137,7 @@ func (c *CachedSource) GetCacheStats() CacheStats {
 		TotalCalls:        c.versionsCalls + c.depsCalls,
 		TotalCacheHits:    c.versionsCacheHits + c.depsCacheHits,
 	}
+	c.mu.Unlock()
 
 	if stats.VersionsCalls > 0 {
 		stats.VersionsHitRate = float64(stats.VersionsCacheHits) / float64(stats.VersionsCalls)
@@ -131,10 +156,30 @@ func (c *CachedSource) GetCacheStats() CacheStats {
 
 // ClearCache clears all cached data while preserving the underlying source.
 func (c *CachedSource) ClearCache() {
+	c.mu.Lock()
 	c.versionsCache = make(map[Name][]Version)
 	c.depsCache = make(map[string][]Term)
 	c.versionsCalls = 0
 	c.versionsCacheHits = 0
 	c.depsCalls = 0
 	c.depsCacheHits = 0
+	c.mu.Unlock()
+}
+
+func cloneVersions(in []Version) []Version {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Version, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneTerms(in []Term) []Term {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Term, len(in))
+	copy(out, in)
+	return out
 }

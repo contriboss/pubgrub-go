@@ -40,7 +40,8 @@ type CombinedSource []Source
 // GetVersions queries all sources and returns the combined set of versions
 // in sorted order. Returns an error only if all sources fail with non-NotFound errors.
 func (s CombinedSource) GetVersions(name Name) ([]Version, error) {
-	var ret []Version
+	unique := make(map[string]Version)
+	var firstErr error
 	var sawNotFound bool
 	for _, source := range s {
 		versions, err := source.GetVersions(name)
@@ -50,29 +51,48 @@ func (s CombinedSource) GetVersions(name Name) ([]Version, error) {
 				sawNotFound = true
 				continue
 			}
-			return nil, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
-		ret = append(ret, versions...)
+		for _, ver := range versions {
+			key := ver.String()
+			if _, ok := unique[key]; !ok {
+				unique[key] = ver
+			}
+		}
 	}
 
-	if len(ret) == 0 {
-		if sawNotFound {
-			return nil, &PackageNotFoundError{Package: name}
+	if len(unique) > 0 {
+		ret := make([]Version, 0, len(unique))
+		for _, ver := range unique {
+			ret = append(ret, ver)
 		}
+
+		// sort the versions
+		slices.SortFunc(ret, func(a Version, b Version) int {
+			return a.Sort(b)
+		})
+
+		return ret, nil
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	if sawNotFound {
 		return nil, &PackageNotFoundError{Package: name}
 	}
 
-	// sort the versions
-	slices.SortFunc(ret, func(a Version, b Version) int {
-		return a.Sort(b)
-	})
-
-	return ret, nil
+	return nil, &PackageNotFoundError{Package: name}
 }
 
 // GetDependencies queries sources in order and returns dependencies from the
 // first source that has the specified package version.
 func (s CombinedSource) GetDependencies(name Name, version Version) ([]Term, error) {
+	var lastErr error
 	for _, source := range s {
 		deps, err := source.GetDependencies(name, version)
 		if err != nil {
@@ -84,11 +104,18 @@ func (s CombinedSource) GetDependencies(name Name, version Version) ([]Term, err
 			case errors.As(err, &verErr):
 				continue
 			default:
-				return nil, err
+				if lastErr == nil {
+					lastErr = err
+				}
+				continue
 			}
 		} else {
 			return deps, nil
 		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
 	}
 
 	return nil, &PackageVersionNotFoundError{Package: name, Version: version}
