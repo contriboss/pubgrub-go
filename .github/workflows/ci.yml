@@ -10,7 +10,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -18,44 +17,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version-file: "go.mod"
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Install Mage
+        run: go install github.com/magefile/mage@latest
 
-      - name: Check coverage
-        run: go tool cover -func=coverage.out
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: latest
-
-  benchmark:
-    name: Benchmark
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - name: Run benchmarks
-        run: go test -bench=. -benchmem
+      - name: Run CI
+        run: mage ci
