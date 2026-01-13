@@ -37,6 +37,10 @@ type SolverOptions struct {
 	// Logger enables debug logging of solver operations.
 	// When nil, no logging is performed.
 	Logger *slog.Logger
+
+	// PreferHighestVersions forces the solver to pick the highest allowed version.
+	// When false, the solver uses a dependency-flexibility heuristic.
+	PreferHighestVersions bool
 }
 
 // SolverOption is a functional option for configuring the solver.
@@ -49,6 +53,7 @@ func defaultSolverOptions() SolverOptions {
 	return SolverOptions{
 		TrackIncompatibilities: false,
 		MaxSteps:               defaultMaxSteps,
+		PreferHighestVersions:  false,
 	}
 }
 
@@ -104,5 +109,13 @@ func WithMaxSteps(steps int) SolverOption {
 func WithLogger(logger *slog.Logger) SolverOption {
 	return func(opts *SolverOptions) {
 		opts.Logger = logger
+	}
+}
+
+// WithPreferHighestVersions forces the solver to choose the highest allowed version.
+// This matches Bundler-style "latest" resolution behavior.
+func WithPreferHighestVersions(enabled bool) SolverOption {
+	return func(opts *SolverOptions) {
+		opts.PreferHighestVersions = enabled
 	}
 }

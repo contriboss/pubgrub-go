@@ -209,3 +209,66 @@ func TestCachedSource_Integration(t *testing.T) {
 		t.Error("expected some calls to be made")
 	}
 }
+
+func TestCachedSource_ReturnsCopiesForVersions(t *testing.T) {
+	inner := &InMemorySource{}
+	v1 := SimpleVersion("1.0.0")
+	v2 := SimpleVersion("2.0.0")
+	pkg := MakeName("pkg")
+
+	inner.AddPackage(pkg, v1, nil)
+	inner.AddPackage(pkg, v2, nil)
+
+	cached := NewCachedSource(inner)
+
+	versions, err := cached.GetVersions(pkg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("expected 2 versions, got %d", len(versions))
+	}
+
+	versions[0] = SimpleVersion("9.9.9")
+
+	versions2, err := cached.GetVersions(pkg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if versions2[0].String() == "9.9.9" {
+		t.Fatalf("cached versions slice should not be mutable by callers")
+	}
+}
+
+func TestCachedSource_ReturnsCopiesForDependencies(t *testing.T) {
+	inner := &InMemorySource{}
+	pkg := MakeName("pkg")
+	v1 := SimpleVersion("1.0.0")
+	dep := MakeName("dep")
+
+	inner.AddPackage(pkg, v1, []Term{
+		NewTerm(dep, EqualsCondition{Version: v1}),
+	})
+
+	cached := NewCachedSource(inner)
+
+	deps, err := cached.GetDependencies(pkg, v1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("expected 1 dependency, got %d", len(deps))
+	}
+
+	deps = append(deps, NewTerm(dep, EqualsCondition{Version: SimpleVersion("2.0.0")}))
+	_ = deps
+
+	deps2, err := cached.GetDependencies(pkg, v1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps2) != 1 {
+		t.Fatalf("cached dependencies slice should not be mutable by callers; got %d entries", len(deps2))
+	}
+}

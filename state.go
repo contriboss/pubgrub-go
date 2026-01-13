@@ -91,8 +91,15 @@ func (st *solverState) addIncompatibility(incomp *Incompatibility) {
 }
 
 // markAssigned is called when a package receives an assignment.
-// Currently a no-op, but provides extension point for future optimizations.
 func (st *solverState) markAssigned(name Name) {
+	st.clearDependencyScoreCache()
+}
+
+func (st *solverState) clearDependencyScoreCache() {
+	if st.depScoreCache == nil {
+		return
+	}
+	clear(st.depScoreCache)
 }
 
 func (st *solverState) debug(msg string, args ...any) {
@@ -374,7 +381,7 @@ func (st *solverState) registerDependencies(pkg Name, version Version, deps []Te
 // applyConstraint applies a dependency constraint to the partial solution.
 // Returns a conflict incompatibility if the constraint cannot be satisfied.
 func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Incompatibility, error) {
-	assign, _, err := st.partial.addDerivation(term, cause)
+	assign, changed, err := st.partial.addDerivation(term, cause)
 	if errors.Is(err, errNoAllowedVersions) {
 		causeDesc := "<nil>"
 		if cause != nil {
@@ -395,6 +402,9 @@ func (st *solverState) applyConstraint(term Term, cause *Incompatibility) (*Inco
 	}
 	if err != nil {
 		return nil, err
+	}
+	if changed {
+		st.clearDependencyScoreCache()
 	}
 	if assign != nil {
 		st.traceAssignment("dependency-constraint", assign)
@@ -434,6 +444,16 @@ func (st *solverState) pickVersion(name Name) (Version, bool, int, error) {
 			return nil, false, 0, nil
 		}
 		return nil, false, 0, err
+	}
+
+	if st.options.PreferHighestVersions {
+		for i := len(versions) - 1; i >= 0; i-- {
+			ver := versions[i]
+			if allowed.Contains(ver) {
+				return ver, true, 0, nil
+			}
+		}
+		return nil, false, 0, nil
 	}
 
 	candidates := make([]Version, 0, maxVersionScoreCandidates)
@@ -500,8 +520,8 @@ func (st *solverState) computeDependencyScore(name Name, ver Version) int {
 
 	deps, err := st.source.GetDependencies(name, ver)
 	if err != nil {
-		// If we can't fetch dependencies, assign neutral score
-		return versionScoreBaseline
+		// If we can't fetch dependencies, heavily penalize this version to avoid selecting it.
+		return versionScoreConflictPenalty
 	}
 
 	totalScore := versionScoreBaseline
@@ -576,6 +596,7 @@ func (st *solverState) resolveConflict(conflict *Incompatibility) (*Incompatibil
 
 		if satisfier.isDecision() && prevLevel < satisfier.decisionLevel {
 			st.partial.backtrack(prevLevel)
+			st.clearDependencyScoreCache()
 			if st.options.Logger != nil {
 				st.options.Logger.Debug("backtracked after conflict",
 					"pivot", satisfier.name.Value(),
