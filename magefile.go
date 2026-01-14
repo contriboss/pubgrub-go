@@ -44,6 +44,18 @@ func Test() error {
 // Lint runs golangci-lint
 func Lint() error {
 	fmt.Println("Running linter...")
+
+	// Check if already available
+	if err := sh.Run("golangci-lint", "--version"); err == nil {
+		return sh.RunV("golangci-lint", "run", "--timeout=5m")
+	}
+
+	fmt.Println("golangci-lint not found, installing...")
+	err := sh.Run("go", "install", "github.com/golangci/golangci-lint/cmd/golangci-lint@latest")
+	if err != nil {
+		return fmt.Errorf("failed to install golangci-lint: %w", err)
+	}
+
 	return sh.RunV("golangci-lint", "run", "--timeout=5m")
 }
 
